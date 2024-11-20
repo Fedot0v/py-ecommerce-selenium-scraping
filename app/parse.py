@@ -47,7 +47,6 @@ class WebDriverManager:
         if headless:
             chrome_options.add_argument("--headless")
 
-        # Initialize the driver
         self.driver = webdriver.Chrome(
             service=self.service,
             options=chrome_options
