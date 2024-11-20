@@ -4,6 +4,7 @@ import time
 import csv
 import os
 
+from tqdm import tqdm
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup, Tag
 from selenium import webdriver
@@ -37,10 +38,12 @@ PAGE_URLS = {
 
 
 class WebDriverManager:
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = True):
         chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
         if not chromedriver_path:
-            raise ValueError("CHROMEDRIVER_PATH environment variable is not set.")
+            raise ValueError(
+                "CHROMEDRIVER_PATH environment variable is not set."
+                )
 
         self.service = Service(executable_path=chromedriver_path)
         chrome_options = Options()
@@ -86,33 +89,42 @@ class Product:
 def fetch_page(url: str, driver_manager: WebDriverManager) -> BeautifulSoup:
     driver_manager.navigate_to(url)
     cookie_accept(url, driver_manager)
-    while True:
 
-        more_button = driver_manager.driver.find_elements(By.CLASS_NAME, "ecomerce-items-scroll-more")
+    more_button = driver_manager.driver.find_elements(
+        By.CLASS_NAME,
+        "ecomerce-items-scroll-more"
+    )
+    max_retries = 100
+    with tqdm(
+        total=max_retries,
+        desc="Loading more items",
+        unit="click", ncols=100
+    ) as pbar:
+        while more_button and pbar.n < max_retries:
+            if more_button[0].value_of_css_property("display") == "none":
+                print("No more 'More' button (display: none).")
+                break
 
-        if not more_button or \
-                more_button[0].value_of_css_property("display") == "none":
-
-            print("No more 'More' button (display: none).")
-            break
-
-        try:
-
-            driver_manager.click_element(
-                By.CLASS_NAME,
-                "ecomerce-items-scroll-more"
-            )
-            print("Clicked 'More' button.")
-            time.sleep(1)
-
-        except NoSuchElementException:
-            print("No more 'More' button.")
-            break
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            break
+            try:
+                driver_manager.click_element(
+                    By.CLASS_NAME,
+                    "ecomerce-items-scroll-more"
+                )
+                print("Clicked 'More' button.")
+                time.sleep(1)
+                pbar.update(1)
+                more_button = driver_manager.driver.find_elements(
+                    By.CLASS_NAME,
+                    "ecomerce-items-scroll-more"
+                    )
+            except NoSuchElementException:
+                print("No more 'More' button.")
+                break
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                break
+    
     page_source = driver_manager.get_page_source()
-
     return BeautifulSoup(page_source, "html.parser")
 
 
@@ -122,8 +134,7 @@ def cookie_accept(url: str, driver_manager: WebDriverManager) -> None:
         By.XPATH,
         '//*[@id="cookieBanner"]/div[2]/button'
     )
-    print("Cookie accepted.")
-    
+
 
 def parse_single_product(soup: Tag) -> Product:
     title = soup.find(class_="title").text.strip()
@@ -131,7 +142,6 @@ def parse_single_product(soup: Tag) -> Product:
     price = float(soup.find(class_="price").text.strip().replace("$", ""))
     rating = len(soup.find_all("span", class_="ws-icon ws-icon-star"))
     num_of_reviews = int(soup.find(class_="review-count").text.split()[0])
-    print(f"title: {title}")
     return Product(
         title=title,
         description=description,
@@ -141,11 +151,15 @@ def parse_single_product(soup: Tag) -> Product:
     )
 
 
-def extract_all_products(soup: Tag) -> Product:
+def extract_all_products(soup: Tag) -> list[Product]:
     all_products = soup.find_all('div', class_='col-md-4 col-xl-4 col-lg-4')
     print(f"Found {len(all_products)} products")
     products_list = []
-    for product in all_products:
+    for product in tqdm(
+        all_products,
+        desc="Extracting all products...",
+        ncols=100
+        ):
         products_list.append(parse_single_product(product))
     return products_list
 
@@ -159,9 +173,13 @@ def write_to_csv(file_name: str, products: list[Product]) -> None:
             "Price",
             "Rating",
             "Number of Reviews"
-            ]
+        ]
         )
-        for product in products:
+        for product in tqdm(
+            products,
+            desc="Writing to csv files...",
+            ncols=100
+        ):
             writer.writerow(
                 [
                     product.title,
